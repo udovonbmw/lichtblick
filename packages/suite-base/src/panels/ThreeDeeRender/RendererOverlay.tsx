@@ -36,6 +36,7 @@ import { HUD } from "@lichtblick/suite-base/panels/ThreeDeeRender/HUD";
 import { customTypography } from "@lichtblick/theme";
 
 import { InteractionContextMenu, Interactions, SelectionObject, TabType } from "./Interactions";
+import { HoverTooltip, HoverEntityInfo } from "./Interactions/HoverTooltip";
 import type { PickedRenderable } from "./Picker";
 import { Renderable } from "./Renderable";
 import { useRenderer, useRendererEvent } from "./RendererContext";
@@ -129,6 +130,11 @@ export function RendererOverlay(props: Props): React.JSX.Element {
     undefined,
   );
   const [interactionsTabType, setInteractionsTabType] = useState<TabType | undefined>(undefined);
+  const [hoveredEntities, setHoveredEntities] = useState<HoverEntityInfo[]>([]);
+  const [hoverPosition, setHoverPosition] = useState<{ clientX: number; clientY: number }>({
+    clientX: 0,
+    clientY: 0,
+  });
   const renderer = useRenderer();
 
   // Toggle object selection mode on/off in the renderer
@@ -143,6 +149,55 @@ export function RendererOverlay(props: Props): React.JSX.Element {
     setClickedPosition({ clientX: rect.left + cursorCoords.x, clientY: rect.top + cursorCoords.y });
     setSelectedRenderables(selections);
     setSelectedRenderable(selections.length === 1 ? selections[0] : undefined);
+  });
+
+  useRendererEvent("renderableHovered", (selections, cursorCoords) => {
+    const rect = props.canvas?.getBoundingClientRect();
+    if (rect) {
+      setHoverPosition({ clientX: rect.left + cursorCoords.x, clientY: rect.top + cursorCoords.y });
+    }
+    const infos: HoverEntityInfo[] = [];
+    for (const sel of selections) {
+      const details: Record<string, unknown> | undefined =
+        sel.instanceIndex != undefined
+          ? (sel.renderable.instanceDetails(sel.instanceIndex) as
+              | Record<string, unknown>
+              | undefined)
+          : (sel.renderable.details() as Record<string, unknown> | undefined);
+
+      const metadata: { key: string; value: string }[] = [];
+
+      if (details != undefined) {
+        const entityMeta = details.metadata;
+        if (Array.isArray(entityMeta)) {
+          for (const kv of entityMeta) {
+            if (kv != undefined && typeof kv === "object" && "key" in kv && "value" in kv) {
+              metadata.push({
+                key: String((kv as { key: unknown }).key),
+                value: String((kv as { value: unknown }).value),
+              });
+            }
+          }
+        }
+        // Then add any remaining top-level primitive fields (id, frame_id, etc.)
+        for (const [k, v] of Object.entries(details)) {
+          if (
+            k !== "metadata" &&
+            v != undefined &&
+            (typeof v === "string" || typeof v === "number" || typeof v === "boolean")
+          ) {
+            metadata.push({ key: k, value: String(v) });
+          }
+        }
+      }
+
+      infos.push({
+        topic: sel.renderable.topic ?? sel.renderable.name ?? "unknown",
+        entityId: sel.renderable.name ?? `object-${sel.instanceIndex ?? 0}`,
+        metadata,
+      });
+    }
+    setHoveredEntities(infos);
   });
 
   const [showResetViewButton, setShowResetViewButton] = useState(renderer?.canResetView() ?? false);
@@ -400,6 +455,7 @@ export function RendererOverlay(props: Props): React.JSX.Element {
         />
       )}
       <HUD renderer={renderer} />
+      <HoverTooltip entities={hoveredEntities} position={hoverPosition} canvas={props.canvas} />
       {stats}
       {resetViewButton}
     </>
